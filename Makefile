@@ -17,6 +17,8 @@ install: $(ve)
 	$(python) setup.py install
 develop:
 	$(python) setup.py develop
+upload:
+	$(python) setup.py sdist upload
 
 monitor:
 	$(ve)/bin/tailall /var/log
