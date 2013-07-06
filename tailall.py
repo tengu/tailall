@@ -45,15 +45,22 @@ def ignore_sigpipe(f):
     wrap.func_name=f.func_name
     return wrap
 
+def tsv_to_stdout(pair):
+    """write the pair to stdout as tsv"""
+    print '\t'.join(pair)
+    sys.stdout.flush()
+
 class Watcher(object):
     """monitor log files that get written. relay the lines to stdout."""
 
-    def __init__(self, monitor, path, flush=False):
-        """start tracking this file"""
+    def __init__(self, monitor, path, out=tsv_to_stdout):
+        """start tracking this file.
+        out: callable that takes a pair (path, line)
+        """
 
         self.monitor=monitor
         self.path=path
-        self.flush=flush
+        self.out=out
 
         # attach at the end of the file
         # todo: emit the last line of the pre-existing content.
@@ -72,9 +79,7 @@ class Watcher(object):
     def emit(self, line):
         """deliver the captured log line downstream"""
 
-        print '\t'.join([self.path, line.strip()])
-        if self.flush:
-            sys.stdout.flush()
+        self.out( (self.path, line.strip()) )
         
     def read_lines(self):
 
@@ -111,7 +116,7 @@ class Watcher(object):
 class Monitor(object):
     """manage a bunch of log file Watchers"""
 
-    def __init__(self, gc_interval=10000, gc_stale_age=180):
+    def __init__(self, gc_interval=10000, gc_stale_age=180, watcher_opt=None):
         """
         * scan for stale watchers every gc_interval events
         * a watcher is considered stale and subject for gc 
@@ -121,6 +126,7 @@ class Monitor(object):
         self.gc_interval=gc_interval
         self.gc_stale_age=gc_stale_age
         self.n=0
+        self.watcher_opt=watcher_opt or {}
 
     def got_event(self, s):
         """ fs event callback. """
@@ -132,7 +138,7 @@ class Monitor(object):
                 watcher=self.watcher.get(path)
                 if not watcher:
                     try:
-                        watcher=Watcher(self, path, flush=True)
+                        watcher=Watcher(self, path, **self.watcher_opt)
                         self.watcher[path]=watcher
                         log.info(ll('watch file', path))
                     except IOError, e:
@@ -179,18 +185,38 @@ class FsEvent(ProcessEvent):
 
         self.event=event
 
-def watch_directory(dir_to_monitor):
+def watch_path(path, add_watch_opt=None, watcher_opt=None):
+    """Tail all the files specify by path.
+    
+    path:  By default all files under the path, which should be a directory, are tailed.
+           Path could also be list of paths or a glob pattern.
+           The behavior can be modified by add_watch_opt. 
+           See pyinotify.WatchManager.add_watch.
+
+    output: defaults to stdout. 
+            can be diverted any callable with:
+                   watcher_opt=dict(out=got_log_line)
+            where got_log_line() takes a tuple (log_path, log_line)
+
+    *_opt: Are pass-through to pyinotify.WatchManager.add_watch and tailall.Monitor.
+           See respective functions for detail.
+    """
 
     wm = WatchManager()
     notifier = Notifier(wm, default_proc_fun=FsEvent())
     #mask=ALL_EVENTS
     #mask=IN_MOVED_TO|IN_CREATE|IN_MODIFY
     mask=IN_MODIFY|IN_CLOSE_WRITE
-    wm.add_watch(dir_to_monitor, mask, rec=True, auto_add=False)
+    kw=dict(rec=True, auto_add=False)
+    kw.update(add_watch_opt or {})
+    wm.add_watch(path, mask, **kw)
 
-    monitor=Monitor()
+    monitor=Monitor(watcher_opt=watcher_opt)
 
     notifier.loop(callback=monitor.got_event)
+
+# backwad compatibility
+watch_directory=watch_path
 
 @ignore_sigpipe
 def main():
@@ -199,7 +225,7 @@ def main():
     log_dirs=sys.argv[1:]
     for log_dir in log_dirs:
         log.info(ll('watch dir', log_dir))
-        watch_directory(log_dir)
+        watch_path(log_dir)
     else:
         print >>sys.stderr, 'usage:', sys.argv[0], 'log_dir [...]'
         sys.exit(1)
