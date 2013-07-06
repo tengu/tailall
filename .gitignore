@@ -1,0 +1,5 @@
+x.*
+dist
+build
+ve/
+*.egg-info
