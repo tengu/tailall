@@ -79,7 +79,7 @@ class Watcher(object):
     def emit(self, line):
         """deliver the captured log line downstream"""
 
-        self.out( (self.path, line.strip()) )
+        self.out( (self.path, line.strip('\n')) )
         
     def read_lines(self):
 
